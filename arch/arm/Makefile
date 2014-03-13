@@ -8,7 +8,7 @@ GCC_PREFIX := $(GCC_PREFIX)arm-none-eabi-
 
 RUSTC := $(RUST_ROOT)/bin/rustc
 #RUSTCFLAGS := -O --target $(TARGET) -Z no-landing-pads -Z debug-info -Z extra-debug-info --cfg $(CHIP)
-RUSTCFLAGS := -O --target $(TARGET) -Z no-landing-pads --cfg $(CHIP)
+RUSTCFLAGS := -O --target $(TARGET) -Z no-landing-pads --cfg target_chip=\"$(CHIP)\"
 
 AS := $(GCC_PREFIX)as
 LD := $(GCC_PREFIX)ld

@@ -1,6 +1,8 @@
 /* drivers::arm1176jzf_s.rs */
 
-pub fn init(){
+use kernel::screen::Resolution;
+
+pub fn init(_ : Resolution){
     unsafe{
         let p = gpio::Pin::get(16).get();
         p.setMode(gpio::OUTPUT);

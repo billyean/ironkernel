@@ -5,8 +5,16 @@ use super::io;
 use core::option::{Option, None};
 use kernel;
 
-pub mod arm1176jzf_s;
-pub mod arm926ej_s;
+// See http://static.rust-lang.org/doc/master/rust.html#conditional-compilation
+#[cfg(target_chip = "arm1176jzf-s")]
+pub use chip = self::arm1176jzf_s;
+#[cfg(target_chip = "arm926ej-s")]
+pub use chip = self::arm926ej_s;
+
+#[cfg(target_chip = "arm1176jzf-s")]
+mod arm1176jzf_s;
+#[cfg(target_chip = "arm926ej-s")]
+mod arm926ej_s;
 
 pub fn init() {
 
@@ -20,8 +28,9 @@ pub fn init() {
         });
     }
     */
-    arm1176jzf_s::init();
-    arm926ej_s::init(kernel::screen::Resolutions::VGA);
+    unsafe {
+        chip::init(kernel::screen::Resolutions::VGA);
+    }
 }
 
 pub static mut keydown: Option<extern unsafe fn(char)> = None;
