@@ -82,6 +82,7 @@ pub enum Pixel{
 }
 
 impl Pixel{
+    // TODO allow other color modes
     pub fn new(c : ColorDepth) -> Pixel{
         match c {
             BWColor   => BWPixel(false),
@@ -129,15 +130,17 @@ pub trait ScreenCanvas{
 
     fn clear(&mut self, c : &Pixel) -> bool{
         let res = self.getResolution();
-        let mut i = 0;
         let mut j = 0;
         let mut ok = true;
-        while j < res.w
+        while j < res.h
         {
-            while i < res.h
+            let mut i = 0;
+            while i < res.w
             {
                 ok = ok && self.drawPixel(c, &(i, j));
+                i += 1;
             }
+            j += 1;
         }
         ok
     }
@@ -162,7 +165,6 @@ pub trait TerminalCanvas : ScreenCanvas {
         {
             self.scrollup();
         }
-        let font_offset = (c as u8) - 0x20;
         let map = self::font::bitmaps[font_offset];
 
         let mut i = 0;

@@ -52,6 +52,17 @@ pub fn main()
     }*/
 }
 
+
+#[cfg(target_chip = "arm1176jzf-s")]
+fn start_shell()
+{
+    let shell : sgash::SGASH;
+    shell.init();
+    shell.attachToScreen(drivers::chip::screen::Screen0);
+    shell.attachToSerial(drivers::chip::serial::UART0);
+}
+
+
 #[lang = "exchange_malloc"]
 #[inline]
 pub unsafe fn malloc_raw(size: uint) -> *mut u8 

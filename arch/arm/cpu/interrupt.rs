@@ -1,8 +1,6 @@
 use core::mem::{volatile_store, transmute};
 use core::ptr::offset;
 
-use platform::io;
-
 static VT: *u32 = 0 as *u32;
 
 #[repr(u8)]

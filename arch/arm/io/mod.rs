@@ -1,9 +1,6 @@
 /* io::mod.rs */
 
-use core::option::Some;
 use core::mem::{volatile_store, volatile_load};
-use super::drivers;
-use kernel::sgash;
 
 pub unsafe fn read(addr: u32)	->	u32
 {

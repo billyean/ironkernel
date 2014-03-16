@@ -1,24 +1,27 @@
 /* driver::mod.rs */
 
-use super::cpu::interrupt;
 use super::io;
 use core::option::{Option, None};
 use kernel;
 
 // See http://static.rust-lang.org/doc/master/rust.html#conditional-compilation
+
+// Raspberry Pi
 #[cfg(target_chip = "arm1176jzf-s")]
 pub use chip = self::arm1176jzf_s;
+// QEMU
 #[cfg(target_chip = "arm926ej-s")]
 pub use chip = self::arm926ej_s;
 
-#[cfg(target_chip = "arm1176jzf-s")]
-mod arm1176jzf_s;
+
 #[cfg(target_chip = "arm926ej-s")]
 mod arm926ej_s;
+#[cfg(target_chip = "arm1176jzf-s")]
+mod arm1176jzf_s;
+
+
 
 pub fn init() {
-
-    
     // removed 926-specific initialization
     /*
      * unsafe {

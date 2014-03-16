@@ -1,10 +1,8 @@
 /* drivers::arm926ej_s */
 
-use core::option::{Some, None};
 use core::mem;
-use platform::cpu::interrupt;
+
 use kernel;
-use kernel::{serial, screen, sgash};
 use kernel::screen::*;
 use kernel::sgash::SGASH;
 use core::mem::transmute;
@@ -17,12 +15,9 @@ static VIC_INT_DISABLE  : *mut u32 = (0x10140000 + 0x14) as *mut u32; // "enable
 
 pub mod screen
 {
-    use kernel::sgash;
     use kernel::screen::*;
     use kernel::screen::font;
     use super::super::io::*;
-    use core::mem::{volatile_store, volatile_load};
-    use core::fail::abort;
 
     pub struct canvas{
         CURSOR : cursor     ,
@@ -58,7 +53,7 @@ pub mod screen
         {
             true 
         }
-        
+
         fn setResolution(&mut self, res : Resolution) -> Resolution
         {
             self.SCREEN_WIDTH = res.w as u32;
@@ -69,6 +64,7 @@ pub mod screen
             /* For the following magic values, see 
              * http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0225d/CACHEDGD.html
              */
+
             match res {
                 WVGA2 => unsafe {
                     // 800x600
@@ -82,7 +78,8 @@ pub mod screen
                     
                     /* See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0161e/I911024.html */
                     ws(0x10120018, 0x82B);
-                },
+                },               
+                /*#[allow(unreachable_code)]                      
                 VGA => unsafe {
                     // 640x480
                     // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0225d/CACCCFBF.html
@@ -98,7 +95,7 @@ pub mod screen
                     ws(0x10120018, 0x82B);
                 },
                 _ => abort() 
-                    //*/
+                    */
             } // match resolution                
 
             self.getResolution()
@@ -114,14 +111,25 @@ pub mod screen
             ARGB
         }
 
+        #[allow(unused_variable)]
         fn setColorDepth(&mut self, d : ColorDepth) -> ColorDepth
         {
             self.getColorDepth()
         }
         
+        #[allow(unused_variable)]
         fn drawPixel(&mut self, color : &Pixel, coords : &(uint, uint)) -> bool
         {
-            false
+            match *color {
+                ARGBPixel(r, g, b, a) => unsafe { // Allow it: direct write
+                    let (xx, yy) = *coords;
+                    let (x, y) = (xx as u32, yy as u32);
+                    let addr = self.START_ADDR + 4 * (x + y * self.SCREEN_WIDTH);
+                    wh(addr, color.word());
+                    true
+                },
+                _ => false
+            }
         }
                 
         fn ready(&mut self) -> bool
@@ -145,7 +153,6 @@ pub mod screen
         unsafe fn scrollup(&mut self)
         {
             let curHeight = self.CURSOR.height;
-            let curWidth = self.CURSOR.width;
             let mut i = curHeight * self.SCREEN_WIDTH;
             while i < (self.SCREEN_WIDTH*self.SCREEN_HEIGHT)
             {
@@ -163,9 +170,6 @@ pub mod screen
         }
         unsafe fn drawCharacter(&mut self, c: char) -> bool
         {
-            let curHeight = self.CURSOR.height;
-            let curWidth = self.CURSOR.width;
-
             if self.CURSOR.x +(self.SCREEN_WIDTH* (self.CURSOR.y)) >= self.SCREEN_WIDTH*self.SCREEN_HEIGHT
             {
                 self.scrollup();
@@ -175,7 +179,7 @@ pub mod screen
 
             let mut i = -1;
             let mut j = 0;
-            let mut addr = self.START_ADDR + 4*(self.CURSOR.x + curWidth + 1 + self.SCREEN_WIDTH* (self.CURSOR.y));
+            let mut addr = self.START_ADDR + 4*(self.CURSOR.x + self.CURSOR.width + 1 + self.SCREEN_WIDTH* (self.CURSOR.y));
             while j < self.CURSOR.height
             {
                 while i < self.CURSOR.width
@@ -298,32 +302,42 @@ pub mod screen
 
 pub unsafe fn init(r : Resolution)
 {
-    let cv = screen::Screen0;
+    let cv = &mut screen::Screen0;
+    cv.sync();
     cv.setResolution(r);
     cv.set_bg(kernel::screen::ARGBPixel(0x00, 0x22, 0x2C, 0x38));
     cv.set_fg(kernel::screen::ARGBPixel(0x00, 0xFA, 0xFC, 0xFF));
     cv.set_cursor_color(kernel::screen::ARGBPixel(0x00, 0xFA, 0xFC, 0xFF));
     cv.fill_bg();
-
-    let size : uint = mem::size_of::<SGASH>();
-    let shell : &mut kernel::shell::Shell = transmute(kernel::malloc_raw(size));
-    shell.attachToScreen(&screen::Screen0);
-    shell.attachToSerial(&serial::UART0);
 }
+
+static UART_CLK : uint = 24000000; // 24 MHz
 
 pub mod serial
 {
     use kernel::serial::*;
     use kernel;
     use platform::cpu::interrupt;
-
     use core::mem::{volatile_load, volatile_store};
+    use platform::io;
+
+    // TODO Use resizable buffers
+    static UART_BUF_SZ : uint = 1024;
+
+    // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0224i/Bbabegge.html
+
+
     struct UART{
-        base : *mut u32,
-        IMSC : *mut u32,
-        IRQ : u8,
-        rate : baud,
+        priv base : *mut u32,
+        priv IMSC : *mut u32,
+        priv IRQ : u8,
+        priv rate : baud,
+        priv buffer : [u8, .. UART_BUF_SZ],
+        priv buf_head : uint,
+        priv buf_count : uint,
     }
+
+    // See http://infocenter.arm.com/help/topic/com.arm.doc.ddi0183f/DDI0183.pdf
 
     pub static mut UART0 : UART = UART {
         base : 0x101f1000 as *mut u32,
@@ -331,11 +345,16 @@ pub mod serial
         IRQ : 12,
         /* TODO receive handlers */
         rate : 0,
+        buffer : [0, .. UART_BUF_SZ],
+        buf_head : 0,
+        buf_count : 0,
     }; 
 
     impl Serial for UART{
 
         /// Initialize device and begin transmission. Returns true if device successfully opened.
+        // TODO allow for multiple baud rates
+        #[allow(unused_variable)]
         fn open(&mut self, r : u32) -> bool
         {
             unsafe{
@@ -351,6 +370,8 @@ pub mod serial
                     t.enable(interrupt::IRQ, UART0_receiveInterrupt);
                 });
             }
+            self.buf_head = 0;
+            self.buf_count = 0;
             false
         }
 
@@ -363,29 +384,47 @@ pub mod serial
         fn close(&mut self) -> bool
         {
             self.rate = 0;
+            self.buf_head = 0;
+            self.buf_count = 0;
             true
         }
 
         /// Number of bytes available to read
         fn available(&self) -> uint
         {
-            0
+            self.buf_count
         }
         
         /// Read up to length bytes into buffer. Return number of bytes read.
-        fn readBuf(&mut self, buffer : &mut u8, length : uint) -> uint
+        fn readBuf(&mut self, buffer : &mut [u8], length : uint) -> uint
         {
-            0
+            let mut i = 0;
+            while (i < length && self.buf_count > 0)
+            {
+                self.read(&mut buffer[i]);
+                i += 1;
+            }
+            i
         }
 
         /// Read one character into buffer. Return number of bytes read.
-        fn read(&mut self, c : &mut char) -> uint
+        fn read(&mut self, c : &mut u8) -> uint
         {
-            0
+            if self.buf_count == 0 
+            {
+                return 0;
+            }
+            else
+            {
+                *c = self.buffer[self.buf_head];
+                self.buf_head += 1;
+                self.buf_count -= 1;
+                return 1;
+            }
         }
 
         /// Write a single byte. Return number of bytes written.
-        fn write(&self, c : char) -> uint
+        fn write(&self, c : u8) -> uint
         {
             unsafe {
                 /*
@@ -399,9 +438,14 @@ pub mod serial
         }
 
         /// Write a buffer of bytes. Return number of bytes written.
-        fn writeBuf(&self, buffer : &u8, length : uint) -> uint
+        fn writeBuf(&self, buffer : &[u8], length : uint) -> uint
         {
-            0
+            let mut i = 0;
+            while (i < length)
+            {
+                self.write(buffer[i]);
+            }
+            return length;
         }
 
         fn flush(&self) -> uint
@@ -421,11 +465,28 @@ pub mod serial
             ()
         }
     }
-   
-#[no_mangle]
-    fn UART0_receiveInterrupt() 
+  
+    impl UART
     {
-        let x = (*UART0.base) as u8 as char;
+        fn receive(&mut self, c : u8) -> bool
+        {
+            if(self.buf_count == UART_BUF_SZ)
+            {
+                false
+            }else
+            {
+                self.buffer[(self.buf_head + self.buf_count) % UART_BUF_SZ] = c;
+                self.buf_count += 1;
+                true
+            }
+        }
+    }
+
+#[no_mangle]
+    unsafe fn UART0_receiveInterrupt() 
+    { 
+        let x = io::read(UART0.base as u32) as u8;
+        UART0.receive(x);
         asm!("  pop {r11, lr}
                 subs pc, r14, #4") // pc = lr - 4
 

@@ -1,14 +1,10 @@
-use core::mem::size_of;
-use core::ptr::set_memory;
-use core::option::Some;
-
-use kernel::heap;
 use kernel::memory::physical;
-use kernel;
 
+#[allow(dead_code)]
 static CACHE:  u32 = 1 << 3;
+#[allow(dead_code)]
 static BUFFER: u32 = 1 << 2;
-
+#[allow(dead_code)]
 pub static SECTION: u32 = 0b10010;
 pub static RW:      u32 = 1 << 10;
 pub static USER:    u32 = 1 << 11;
@@ -16,6 +12,7 @@ pub static USER:    u32 = 1 << 11;
 #[packed]
 struct Descriptor(u32);
 
+#[allow(dead_code)]
 #[packed]
 struct PageTableCoarse {
     pages: [Descriptor, ..256]
