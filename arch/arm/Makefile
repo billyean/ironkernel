@@ -12,6 +12,7 @@ RUSTCFLAGS := -O --target $(TARGET) -Z no-landing-pads --cfg target_chip=\"$(CHI
 
 AS := $(GCC_PREFIX)as
 LD := $(GCC_PREFIX)ld
+AR := $(GCC_PREFIX)ar
 
 LLC := $(LLVM_ROOT)/bin/llc
 LLCFLAGS := -march=arm -mcpu=$(CHIP) --float-abi=hard -asm-verbose
@@ -50,11 +51,11 @@ $(LCORE):
 	$(RUSTC) $(RUSTCFLAGS) --dep-info $(@D)/core.d $(CORE_LIB) --out-dir $(BDIR)
 
 $(BDIR)/core.bc: $(LCORE)
-	cd $(@D); ar -x $(<F) $(@F)
+	cd $(@D); $(AR) -x $(<F) $(@F)
 
 # Compile rustboot
 $(BDIR)/main.bc: ../../lib.rs $(MODS) $(LCORE)
-	$(RUSTC) $(RUSTCFLAGS) --dep-info $(@D)/main.d -L $(BDIR) ../../lib.rs --out-dir $(BDIR)
+	$(RUSTC) $(RUSTCFLAGS) --dep-info $(@D)/main.d -L $(BDIR) --emit-llvm ../../lib.rs --out-dir $(BDIR)
 #	$(RUSTC) $(RUSTCFLAGS) --dep-info $(@D)/main.d -L $(BDIR) --emit-llvm ../../lib.rs --out-dir $(BDIR)
 
 %.s: %.bc
