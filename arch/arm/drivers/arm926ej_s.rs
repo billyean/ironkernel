@@ -4,14 +4,13 @@ use core::mem;
 
 use kernel;
 use kernel::screen::*;
-use kernel::sgash::SGASH;
 use core::mem::transmute;
 
 /* http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0225d/BBABEGGE.html */
 /* http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0225d/BBABEGGE.html */
-static VIC_INT          : *mut u32 = (0x10140000) as *mut u32;
-static VIC_INT_ENABLE   : *mut u32 = (0x10140000 + 0x10) as *mut u32;
-static VIC_INT_DISABLE  : *mut u32 = (0x10140000 + 0x14) as *mut u32; // "enable clear"
+pub static VIC_INT          : *mut u32 = (0x10140000) as *mut u32;
+pub static VIC_INT_ENABLE   : *mut u32 = (0x10140000 + 0x10) as *mut u32;
+pub static VIC_INT_DISABLE  : *mut u32 = (0x10140000 + 0x14) as *mut u32; // "enable clear"
 
 pub mod screen
 {
@@ -311,7 +310,7 @@ pub unsafe fn init(r : Resolution)
     cv.fill_bg();
 }
 
-static UART_CLK : uint = 24000000; // 24 MHz
+pub static UART_CLK : uint = 24_000_000; // 24 MHz
 
 pub mod serial
 {
@@ -320,167 +319,19 @@ pub mod serial
     use platform::cpu::interrupt;
     use core::mem::{volatile_load, volatile_store};
     use platform::io;
+    use platform::drivers::pl011_uart::PL011;
+    use platform::drivers::pl011_uart::UART_BUFF_SZ;
 
-    // TODO Use resizable buffers
-    static UART_BUF_SZ : uint = 1024;
-
-    // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0224i/Bbabegge.html
-
-
-    struct UART{
-        priv base : *mut u32,
-        priv IMSC : *mut u32,
-        priv IRQ : u8,
-        priv rate : baud,
-        priv buffer : [u8, .. UART_BUF_SZ],
-        priv buf_head : uint,
-        priv buf_count : uint,
-    }
-
-    // See http://infocenter.arm.com/help/topic/com.arm.doc.ddi0183f/DDI0183.pdf
-
-    pub static mut UART0 : UART = UART {
-        base : 0x101f1000 as *mut u32,
-        IMSC :  (0x101f1000 + 0x038) as *mut u32,
+    pub static mut UART0 : PL011 = PL011 {
+        base : 0x101f1000,
         IRQ : 12,
-        /* TODO receive handlers */
+        receiver : UART0_receiveInterrupt,
+
         rate : 0,
-        buffer : [0, .. UART_BUF_SZ],
+        buffer : [0, .. UART_BUFF_SZ],
         buf_head : 0,
         buf_count : 0,
     }; 
-
-    impl Serial for UART{
-
-        /// Initialize device and begin transmission. Returns true if device successfully opened.
-        // TODO allow for multiple baud rates
-        #[allow(unused_variable)]
-        fn open(&mut self, r : u32) -> bool
-        {
-            unsafe{
-                // enable UART0 IRQ [4]
-                *super::VIC_INT_ENABLE = 1 << self.IRQ;
-                // enable RXIM interrupt (interrupt on receive)
-                /*
-                 * See
-                 * http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0183f/I54603.html
-                 */
-                *self.IMSC = 1 << 4;
-                kernel::int_table.map(|t| {
-                    t.enable(interrupt::IRQ, UART0_receiveInterrupt);
-                });
-            }
-            self.buf_head = 0;
-            self.buf_count = 0;
-            false
-        }
-
-        fn isOpen(&self) -> bool
-        {
-            self.rate == 0
-        }
-
-        /// End transmission, close device. Returns true if device is closed after operation.
-        fn close(&mut self) -> bool
-        {
-            self.rate = 0;
-            self.buf_head = 0;
-            self.buf_count = 0;
-            true
-        }
-
-        /// Number of bytes available to read
-        fn available(&self) -> uint
-        {
-            self.buf_count
-        }
-        
-        /// Read up to length bytes into buffer. Return number of bytes read.
-        fn readBuf(&mut self, buffer : &mut [u8], length : uint) -> uint
-        {
-            let mut i = 0;
-            while (i < length && self.buf_count > 0)
-            {
-                self.read(&mut buffer[i]);
-                i += 1;
-            }
-            i
-        }
-
-        /// Read one character into buffer. Return number of bytes read.
-        fn read(&mut self, c : &mut u8) -> uint
-        {
-            if self.buf_count == 0 
-            {
-                return 0;
-            }
-            else
-            {
-                *c = self.buffer[self.buf_head];
-                self.buf_head += 1;
-                self.buf_count -= 1;
-                return 1;
-            }
-        }
-
-        /// Write a single byte. Return number of bytes written.
-        fn write(&self, c : u8) -> uint
-        {
-            unsafe {
-                /*
-                 * We need to include a blank asm call to prevent rustc
-                 * from optimizing this part out
-                 */
-                asm!("");
-                volatile_store(self.base, c as u32);
-            }
-            1
-        }
-
-        /// Write a buffer of bytes. Return number of bytes written.
-        fn writeBuf(&self, buffer : &[u8], length : uint) -> uint
-        {
-            let mut i = 0;
-            while (i < length)
-            {
-                self.write(buffer[i]);
-            }
-            return length;
-        }
-
-        fn flush(&self) -> uint
-        {
-            0
-        }
-
-        /// Callback on new data available.
-        fn addReceiveHandler(&self, newHandler : serialReceiveHandler) -> bool
-        {
-            false
-        }
-
-        /// Remove all receive handlers
-        fn clearReceiveHandlers(&self)
-        {
-            ()
-        }
-    }
-  
-    impl UART
-    {
-        fn receive(&mut self, c : u8) -> bool
-        {
-            if(self.buf_count == UART_BUF_SZ)
-            {
-                false
-            }else
-            {
-                self.buffer[(self.buf_head + self.buf_count) % UART_BUF_SZ] = c;
-                self.buf_count += 1;
-                true
-            }
-        }
-    }
 
 #[no_mangle]
     unsafe fn UART0_receiveInterrupt() 

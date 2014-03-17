@@ -8,7 +8,7 @@
 #[no_std];
 #[feature(asm, globs, macro_rules)];
 
-extern mod core;
+extern crate core;
 
 #[cfg(target_arch = "arm")]
 pub use support::{memcpy, memmove};

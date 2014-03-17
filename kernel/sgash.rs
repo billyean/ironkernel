@@ -4,6 +4,7 @@ use core::*;
 use core::str::*;
 use core::option::{Some, Option, None}; // Match statement
 use core::iter::Iterator;
+use core::mem::{size_of, transmute};
 use kernel::*;
 use kernel::screen::*;
 use kernel::memory::Allocator;
@@ -60,8 +61,8 @@ impl Shell for SGASH
         {
             Some(_) => false,
             None => {
-                self.splash();
                 self.screen = Some(s);
+                self.splash();
                 true
             }
         }
@@ -124,6 +125,15 @@ impl Shell for SGASH
 
 impl SGASH
 {
+    pub fn new() -> &mut SGASH
+    {
+        unsafe{
+            let sh : &mut SGASH = transmute(malloc_raw(size_of::<SGASH>()));
+            sh.init();
+            sh
+        }
+    }
+    
     fn txChar(&self, x : char)
     {
         match self.serial
@@ -162,16 +172,14 @@ impl SGASH
         }
     }
 
-    fn drawStr(&self, msg: &str)
+    fn drawStr(&mut self, msg: &str)
     {
-        match self.screen
-        {
-            Some(ref scr) => {
-                // TODO Why the awkward color changing thing going on here?
-                // Just to indicate what function it's going through?
+        /*
+        self.screen.map(|scr|  {
+                // Why the awkward color changing thing going on here?
                 let old_fg = scr.getCursor().fg_color;
                 let mut x : u32 = 0x6699AAFF;
-                for c in slice::iter(as_bytes(msg)) {
+
                     x = (x << 8) + (x >> 24); 
                     let mut cur = scr.getCursor();
                     cur.fg_color = screen::ARGBPixel(
@@ -181,21 +189,24 @@ impl SGASH
                                 x       as u8
                         );
                     scr.setCursor(&cur);
-                    self.drawchar(*c as char);
+
                 }
                 let mut cur = scr.getCursor();
                 cur.fg_color = old_fg;
                 scr.setCursor(&cur);
-            },
-            _ => ()
+            }); 
+            */ // removed 2014-03-17 CCE
+        for c in slice::iter(as_bytes(msg)) {
+            self.drawchar(*c as char);
         }
     }
 
-    fn drawchar(&self, x: char)
+    fn drawchar(&mut self, x: char)
     {
+        // Option::map doesn't work here; have to borrow as a ref mut
         match self.screen
         {
-            Some(ref scr) => {
+            Some(ref mut scr) => {
                 let res = scr.getResolution();
                 let mut cur = scr.getCursor();
                 if x == '\n' {
@@ -232,11 +243,11 @@ impl SGASH
         }
     }
     
-    fn backspace(&self)
+    fn backspace(&mut self)
     {
         match self.screen 
         {
-            Some(ref scr) => unsafe {
+            Some(ref mut scr) => unsafe {
                 scr.restore();
                 let mut cur = scr.getCursor();
                 cur.x -= cur.width;

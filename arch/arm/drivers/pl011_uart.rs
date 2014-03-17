@@ -1,60 +1,92 @@
-/* platform::drivers::primecell_uart */
-/* Implementation of Serial for ARM's PrimeCell UART chip (PL011) */
+/* platform::drivers::pl011_uart */
+/* Implementation of Serial for ARM's PL011 UART chip (PL011) */
 // See http://infocenter.arm.com/help/topic/com.arm.doc.ddi0183f/DDI0183.pdf
-//
-use kernel::serial;
+// See also https://code.google.com/p/xv6-rpi/source/browse/src/device/uart.c?spec=svnc73095f6b10f30786b6786732d66532f7fce1988&r=c73095f6b10f30786b6786732d66532f7fce1988
+// (RPi implementation of PL011 in C)
+use kernel::serial::*;
 use platform::drivers::chip;
 use platform::io;
+use platform::cpu::interrupt;
+use kernel;
 
 // TODO resizable buffers
-static PrimeCell_BUF_SZ : uint = 1024
+pub static UART_BUFF_SZ : uint = 1024;
+// TODO Does not use FIFO
+// TODO Does not use error checking
 
-struct PrimeCell {
+pub struct PL011 
+{
     // NB: Base addresses should be mutable, to allow for re-mapping 
     base : u32,
     IRQ : u32,
     
     rate : baud,
 
-    priv buffer : [u8, .. PrimeCell_BUF_SZ],
-    priv buf_head : uint,
-    priv buf_count,
+    receiver : unsafe fn (),
+
+    buffer : [u8, .. UART_BUFF_SZ],
+    buf_head : uint,
+    buf_count : uint,
 
     // TODO proper receive handlers
+
 }
 
-impl Serial for PrimeCell{
+impl Serial for PL011
+{
 
     /// Initialize device and begin transmission. Returns true if device successfully opened.
-    fn open(&mut self, r : u32) -> bool
+    fn open(&mut self, rate : u32) -> bool
     {
         unsafe{
             // Set baud rate
-            // Using tables on page 3-11 of PrimeCell ref for typical baud rates
-            let int_divisor : u16 = chip::UART_CLK / (16 * r);
-            // f_divisor is actually only a 6-bit quantity
-            let f_component : u64 = (chip::UART_CLK as u64 << 7) / ((16 * r) as u64 << 7) - int_divisor << 7 as u64;
-            let f_divisor : u8 = f_component >> 1 + f_component & 1;
+            let int_divisor : u16 = (chip::UART_CLK / (16 * rate as uint)) as u16;
+            // f_divisor is only a 6-bit quantity;
+            // "...taking the fractional part of the required baud rate divisor and multiplying it by 64
+            // and adding 0.5 to account for rounding errors..."
+            let temp : uint = (8 * (chip::UART_CLK % (16 * rate as uint))) / (rate as uint);
+            let f_divisor : u8 = (((temp >> 1) + (temp & 1)) & 0x3F) as u8;
+            
 
-            if(int_divisor == 0 || int_divisor == (1 << 16) - 1 as u16))
+            if(int_divisor == 0 || int_divisor == (1 << 16) - 1)
             {
                 return false;
             }
+            
+            io::wh(self.base + IBRD, int_divisor as u32);
+            io::wh(self.base + FBRD, f_divisor as u32);
 
-            // enable PrimeCell0 IRQ [4]
+            // Set to 8 bits, 1 stop bit, no parity, no FIFO
+            io::wh(self.base + LCR_H, 
+                LCR_WLEN_8 as u32
+                // | LCR_FIFOEN
+                );
+
+            // Enable UART
+            io::wh(self.base + CR,
+                CR_EN
+                | CR_RXE
+                | CR_TXE
+                );
+
+            // Default interrupts for transmit / receive come when FIFO is 1/2 full; FIFO disables
+
+            // enable PL0110 IRQ [4]
             *chip::VIC_INT_ENABLE = 1 << self.IRQ;
+            
             // enable RXIM interrupt (interrupt on receive)
             /*
              * See
              * http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0183f/I54603.html
              */
-            io::ws(self.base + IMSC, 1 << 4);
-            // TODO: Force IRQ enable, with appropriate interrupt handler
-            /*
+            // We use WS here because writing a 0 will clear the bit on the mask. 
+            io::ws(self.base + IMSC, IMSC_RXIM);
+
+            // TODO: Add IRQ handler for 
+            
             kernel::int_table.map(|t| {
-                t.enable(interrupt::IRQ, PrimeCell0_receiveInterrupt);
-            });
-            */
+                t.enable(interrupt::IRQ, self.receiver);
+            }); 
         }
         self.buf_head = 0;
         self.buf_count = 0;
@@ -118,7 +150,7 @@ impl Serial for PrimeCell{
              * from optimizing this part out
              */
             asm!("");
-            volatile_store(self.base + DR, c as u32);
+            io::wh(self.base + DR, c as u32);
         }
         1
     }
@@ -130,6 +162,7 @@ impl Serial for PrimeCell{
         while (i < length)
         {
             self.write(buffer[i]);
+            i += 1;
         }
         return length;
     }
@@ -152,22 +185,39 @@ impl Serial for PrimeCell{
     }
 }
 
-impl PrimeCell
+impl PL011
 {
-    fn receive(&mut self, c : u8) -> bool
+    fn new(_base : u32, _IRQ : u32, _receiver : unsafe fn() ) -> PL011
     {
-        if(self.buf_count == PrimeCell_BUF_SZ)
+        PL011 {
+            base : _base,
+            IRQ : _IRQ,
+            receiver : _receiver,
+
+            rate : 0,
+            buffer : [0, .. UART_BUFF_SZ],
+            buf_head : 0,
+            buf_count : 0,
+        } 
+    }
+
+    pub fn receive(&mut self, c : u8) -> bool
+    {
+        if(self.buf_count == UART_BUFF_SZ)
         {
             false
         }else
         {
-            self.buffer[(self.buf_head + self.buf_count) % PrimeCell_BUF_SZ] = c;
+            self.buffer[(self.buf_head + self.buf_count) % UART_BUFF_SZ] = c;
             self.buf_count += 1;
             true
         }
     }
 }
 
+// CONSTANTS
+
+// Registers
 static DR       : u32 = 0x000; // Data register, UARTDR on page 3-5
 static RSR_ECR  : u32 = 0x004; // Receive status register/error clear register, UARTRSR/UARTECR on page 3-6
 static FR       : u32 = 0x014; // Flag register, UARTFR on page 3-8
@@ -190,5 +240,27 @@ static PCellID0 : u32 = 0xFF0; // UARTPCellID0 register on page 3-25
 static PCellID1 : u32 = 0xFF4; // UARTPCellID1 register on page 3-26
 static PCellID2 : u32 = 0xFF8; // UARTPCellID2 register on page 3-26
 static PCellID3 : u32 = 0xFFC; // UARTPCellID3 register on page 3-26
+
+// Register masks
+static FR_TXFE      : u32 = 1 << 7; // flag register; transmit FIFO empty
+static FR_RXFF      : u32 = 1 << 6; // flag register; receive FIFO full
+static FR_TXFF      : u32 = 1 << 5; // flag register; transmit FIFO full
+static FR_RXFE      : u32 = 1 << 4; // flag register; receive FIFO empty
+static CR_RXE       : u32 = 1 << 9; // control register; receive enable
+static CR_TXE       : u32 = 1 << 8; // control register; transmit enable
+static CR_EN        : u32 = 1 << 0; // control register; UART enable
+static LCR_FIFOEN   : u32 = 1 << 4; // line control register; FIFO enable
+static LCR_PEN      : u32 = 1 << 1; // line control register; parity enable
+static LCR_EPS      : u32 = 1 << 2; // line control register; even parity select (odd default)
+static IMSC_TXIM    : u32 = 1 << 5; // interrupt mask set/clear; transmit interrupt
+static IMSC_RXIM    : u32 = 1 << 4; // interrupt mask set/clear; receive interrupt
+
+enum WLEN
+{
+    LCR_WLEN_8 = 11 << 5,
+    LCR_WLEN_7 = 10 << 5,
+    LCR_WLEN_6 = 01 << 5,
+    LCR_WLEN_5 = 00 << 5,
+}
 
 

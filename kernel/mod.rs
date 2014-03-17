@@ -8,6 +8,8 @@ use cpu::interrupt;
 //use self::memory::virtual::PageDirectory;
 use self::memory::Allocator;
 
+use self::shell::Shell;
+
 pub mod int;
 pub mod ptr;
 pub mod memory;
@@ -45,21 +47,27 @@ pub fn main()
 
     table.load();
     drivers::init();
+    
+    let sh = start_shell();
     // Not for RPi
     /*unsafe {
         drivers::keydown = Some(sgash::parsekey);
         io::init(640, 480);
     }*/
+    while (true)
+    {} // hang
 }
 
-
-#[cfg(target_chip = "arm1176jzf-s")]
-fn start_shell()
+#[cfg(target_chip = "arm926ej-s")]
+fn start_shell() -> &mut Shell
 {
-    let shell : sgash::SGASH;
-    shell.init();
-    shell.attachToScreen(drivers::chip::screen::Screen0);
-    shell.attachToSerial(drivers::chip::serial::UART0);
+    let shell = sgash::SGASH::new();
+    // TODO review safety
+    unsafe{
+        shell.attachToScreen(&'static mut drivers::chip::screen::Screen0 as &'static mut screen::TerminalCanvas); // Should splash
+    }
+    //shell.attachToSerial(drivers::chip::serial::UART0);
+    shell as &mut Shell
 }
 
 

@@ -20,6 +20,9 @@ mod arm926ej_s;
 mod arm1176jzf_s;
 
 
+#[cfg(target_chip = "arm926ej-s")]
+#[cfg(target_chip = "arm1176jzf-s")]
+mod pl011_uart;
 
 pub fn init() {
     // removed 926-specific initialization
