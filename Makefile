@@ -1,5 +1,5 @@
 arch=arm
-RUST_ROOT := /home/cceckman/rust-master
+RUST_ROOT := /usr
 LLVM_ROOT := /usr
 GCC_PREFIX := /usr/bin/
 
